@@ -1,22 +1,93 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import ProtectedRoute from "@/components/protected-route";
+import { fetchNotes, createNote, updateNote, deleteNote as deleteNoteFromDB } from "@/lib/notes-service";
 
 export default function NotesPage() {
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [editingNote, setEditingNote] = useState(null);
+  const [editText, setEditText] = useState("");
 
-  const addNote = () => {
-    if (newNote.trim() !== "") {
-      setNotes([...notes, { id: Date.now(), text: newNote, createdAt: new Date().toLocaleString() }]);
+  // 加载笔记数据
+  useEffect(() => {
+    const loadNotes = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchNotes();
+        setNotes(data);
+      } catch (err) {
+        console.error("加载笔记失败:", err);
+        setError("加载笔记失败，请稍后再试");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadNotes();
+  }, []);
+
+  const addNote = async () => {
+    if (newNote.trim() === "") return;
+
+    try {
+      setLoading(true);
+      setError(null); // 清除之前的错误
+      const createdNote = await createNote(newNote);
+      setNotes([createdNote, ...notes]);
       setNewNote("");
+    } catch (err) {
+      console.error("添加笔记失败:", err);
+      setError(`添加笔记失败: ${err.message || '请稍后再试'}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const deleteNote = (id) => {
-    setNotes(notes.filter(note => note.id !== id));
+  const startEditing = (note) => {
+    setEditingNote(note.id);
+    setEditText(note.text);
+  };
+
+  const cancelEditing = () => {
+    setEditingNote(null);
+    setEditText("");
+  };
+
+  const saveEdit = async () => {
+    if (editText.trim() === "") return;
+
+    try {
+      setLoading(true);
+      const updatedNote = await updateNote(editingNote, editText);
+      setNotes(notes.map(note => 
+        note.id === editingNote ? updatedNote : note
+      ));
+      setEditingNote(null);
+      setEditText("");
+    } catch (err) {
+      console.error("更新笔记失败:", err);
+      setError("更新笔记失败，请稍后再试");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteNote = async (id) => {
+    try {
+      setLoading(true);
+      await deleteNoteFromDB(id);
+      setNotes(notes.filter(note => note.id !== id));
+    } catch (err) {
+      console.error("删除笔记失败:", err);
+      setError("删除笔记失败，请稍后再试");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -41,6 +112,13 @@ export default function NotesPage() {
             </Link>
           </div>
 
+          {/* 错误提示 */}
+          {error && (
+            <div className="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
+              <p className="text-red-700 dark:text-red-300">{error}</p>
+            </div>
+          )}
+
           {/* 添加笔记区域 */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 sm:p-6 mb-6 border border-gray-200 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">
@@ -54,13 +132,14 @@ export default function NotesPage() {
                 placeholder="输入新笔记内容..."
                 className="flex-1 border border-gray-300 dark:border-gray-600 rounded-md px-4 py-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                 onKeyPress={(e) => e.key === 'Enter' && addNote()}
+                disabled={loading}
               />
               <button
                 onClick={addNote}
                 className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-md transition-colors duration-200 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={!newNote.trim()}
+                disabled={!newNote.trim() || loading}
               >
-                添加
+                {loading ? "处理中..." : "添加"}
               </button>
             </div>
           </div>
@@ -76,7 +155,14 @@ export default function NotesPage() {
               </span>
             </div>
             
-            {notes.length === 0 ? (
+            {loading && notes.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                <p className="text-gray-500 dark:text-gray-400 text-lg">
+                  加载中...
+                </p>
+              </div>
+            ) : notes.length === 0 ? (
               <div className="text-center py-12">
                 <div className="text-4xl mb-4 text-gray-400">📝</div>
                 <p className="text-gray-500 dark:text-gray-400 text-lg">
@@ -91,16 +177,64 @@ export default function NotesPage() {
                     className="flex justify-between items-start p-4 bg-gray-50 dark:bg-gray-700 rounded-md border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors duration-200 group"
                   >
                     <div className="flex-1">
-                      <p className="text-gray-800 dark:text-gray-200">{note.text}</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{note.createdAt}</p>
+                      {editingNote === note.id ? (
+                        <div className="space-y-3">
+                          <input
+                            type="text"
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                            autoFocus
+                            onKeyPress={(e) => e.key === 'Enter' && saveEdit()}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={saveEdit}
+                              className="text-sm bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                              disabled={!editText.trim() || loading}
+                            >
+                              保存
+                            </button>
+                            <button
+                              onClick={cancelEditing}
+                              className="text-sm bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded transition-colors duration-200"
+                            >
+                              取消
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-gray-800 dark:text-gray-200">{note.text}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                            {new Date(note.created_at).toLocaleString()}
+                            {note.updated_at && note.updated_at !== note.created_at && (
+                              <span> (更新于 {new Date(note.updated_at).toLocaleString()})</span>
+                            )}
+                          </p>
+                        </>
+                      )}
                     </div>
-                    <button
-                      onClick={() => deleteNote(note.id)}
-                      className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-3 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
-                      title="删除笔记"
-                    >
-                      ✕
-                    </button>
+                    {editingNote !== note.id && (
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => startEditing(note)}
+                          className="text-blue-500 hover:text-blue-700 opacity-0 group-hover:opacity-100 transition-opacity duration-200 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="编辑笔记"
+                          disabled={loading}
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => deleteNote(note.id)}
+                          className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity duration-200 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="删除笔记"
+                          disabled={loading}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
