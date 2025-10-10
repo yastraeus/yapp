@@ -4,14 +4,36 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import ProtectedRoute from "@/components/protected-route";
 import { fetchNotes, createNote, updateNote, deleteNote as deleteNoteFromDB } from "@/lib/notes-service";
+import { optimizeNote, checkAIServiceAvailability } from "@/lib/ai-optimizer";
 
 export default function NotesPage() {
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState("");
+  const [originalNote, setOriginalNote] = useState(""); // 保存原始内容用于撤回
+  const [showUndo, setShowUndo] = useState(false); // 控制撤回按钮显示
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [editingNote, setEditingNote] = useState(null);
   const [editText, setEditText] = useState("");
+  const [aiOptimizing, setAiOptimizing] = useState(false);
+  const [aiServiceAvailable, setAiServiceAvailable] = useState(false);
+
+  // 检查AI服务可用性
+  useEffect(() => {
+    const checkAIAvailability = async () => {
+      try {
+        console.log('开始检查AI服务可用性...');
+        const available = await checkAIServiceAvailability();
+        console.log('AI服务可用性检查结果:', available);
+        setAiServiceAvailable(available);
+      } catch (error) {
+        console.error('检查AI服务可用性失败:', error);
+        setAiServiceAvailable(false);
+      }
+    };
+
+    checkAIAvailability();
+  }, []);
 
   // 加载笔记数据
   useEffect(() => {
@@ -40,11 +62,64 @@ export default function NotesPage() {
       const createdNote = await createNote(newNote);
       setNotes([createdNote, ...notes]);
       setNewNote("");
+      // 重置撤回相关状态
+      setShowUndo(false);
+      setOriginalNote("");
     } catch (err) {
       console.error("添加笔记失败:", err);
       setError(`添加笔记失败: ${err.message || '请稍后再试'}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // AI优化笔记内容
+  const optimizeNoteContent = async () => {
+    if (newNote.trim() === "") {
+      setError("请先输入笔记内容");
+      return;
+    }
+
+    try {
+      setAiOptimizing(true);
+      setError(null);
+      
+      // 保存原始内容用于撤回
+      setOriginalNote(newNote);
+      
+      const optimizedContent = await optimizeNote(newNote);
+      setNewNote(optimizedContent);
+      
+      // 显示撤回按钮
+      setShowUndo(true);
+      
+      // 自动滚动到输入框并聚焦
+      const inputElement = document.querySelector('input[type="text"]');
+      if (inputElement) {
+        inputElement.focus();
+        inputElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } catch (err) {
+      console.error("AI优化失败:", err);
+      setError(`AI优化失败: ${err.message || '请稍后再试'}`);
+    } finally {
+      setAiOptimizing(false);
+    }
+  };
+
+  // 撤回AI优化
+  const undoOptimization = () => {
+    if (originalNote) {
+      setNewNote(originalNote);
+      setShowUndo(false);
+      setOriginalNote("");
+      
+      // 自动滚动到输入框并聚焦
+      const inputElement = document.querySelector('input[type="text"]');
+      if (inputElement) {
+        inputElement.focus();
+        inputElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }
   };
 
@@ -103,6 +178,11 @@ export default function NotesPage() {
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 dark:text-gray-100">
                 我的笔记
               </h1>
+              {aiServiceAvailable && (
+                <span className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 text-xs font-medium px-2 py-1 rounded-full">
+                  AI优化可用
+                </span>
+              )}
             </div>
             <Link 
               href="/"
@@ -121,27 +201,81 @@ export default function NotesPage() {
 
           {/* 添加笔记区域 */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 sm:p-6 mb-6 border border-gray-200 dark:border-gray-700">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">
-              添加新笔记
-            </h2>
-            <div className="flex gap-3">
-              <input
-                type="text"
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
+                添加新笔记
+              </h2>
+              <div className="flex gap-2">
+                {aiServiceAvailable && (
+                  <button
+                    onClick={optimizeNoteContent}
+                    className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-md transition-colors duration-200 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    disabled={!newNote.trim() || aiOptimizing || loading}
+                    title="使用AI智能优化笔记内容"
+                  >
+                    {aiOptimizing ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        优化中...
+                      </>
+                    ) : (
+                      <>
+                        <span>✨</span>
+                        AI优化
+                      </>
+                    )}
+                  </button>
+                )}
+                {showUndo && (
+                  <button
+                    onClick={undoOptimization}
+                    className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md transition-colors duration-200 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 flex items-center gap-2"
+                    title="撤回AI优化，恢复原始内容"
+                  >
+                    <span>↶</span>
+                    撤回优化
+                  </button>
+                )}
+                <button
+                  onClick={addNote}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-md transition-colors duration-200 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!newNote.trim() || loading}
+                >
+                  {loading ? "处理中..." : "添加笔记"}
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-3">
+              <textarea
                 value={newNote}
                 onChange={(e) => setNewNote(e.target.value)}
                 placeholder="输入新笔记内容..."
-                className="flex-1 border border-gray-300 dark:border-gray-600 rounded-md px-4 py-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                onKeyPress={(e) => e.key === 'Enter' && addNote()}
+                className="min-h-[100px] max-h-[300px] border border-gray-300 dark:border-gray-600 rounded-md px-4 py-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-y"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.ctrlKey) {
+                    e.preventDefault();
+                    addNote();
+                  }
+                }}
                 disabled={loading}
+                rows={4}
               />
-              <button
-                onClick={addNote}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-md transition-colors duration-200 shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={!newNote.trim() || loading}
-              >
-                {loading ? "处理中..." : "添加"}
-              </button>
             </div>
+            {aiServiceAvailable && (
+              <div className="mt-2">
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  ✨ AI优化功能可帮助您改进笔记的语法、结构和表达
+                </p>
+                {showUndo && (
+                  <p className="text-xs text-orange-500 dark:text-orange-400 mt-1">
+                    ↶ 已优化，可点击撤回按钮恢复原始内容
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 笔记列表区域 */}
@@ -179,13 +313,18 @@ export default function NotesPage() {
                     <div className="flex-1">
                       {editingNote === note.id ? (
                         <div className="space-y-3">
-                          <input
-                            type="text"
+                          <textarea
                             value={editText}
                             onChange={(e) => setEditText(e.target.value)}
-                            className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                            className="w-full min-h-[100px] max-h-[300px] border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-y"
                             autoFocus
-                            onKeyPress={(e) => e.key === 'Enter' && saveEdit()}
+                            rows={4}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && e.ctrlKey) {
+                                e.preventDefault();
+                                saveEdit();
+                              }
+                            }}
                           />
                           <div className="flex gap-2">
                             <button
@@ -205,7 +344,10 @@ export default function NotesPage() {
                         </div>
                       ) : (
                         <>
-                          <p className="text-gray-800 dark:text-gray-200">{note.text}</p>
+                          <div 
+                            className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words"
+                            dangerouslySetInnerHTML={{ __html: note.text.replace(/\n/g, '<br />') }}
+                          />
                           <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                             {new Date(note.created_at).toLocaleString()}
                             {note.updated_at && note.updated_at !== note.created_at && (
