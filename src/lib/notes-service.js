@@ -47,7 +47,7 @@ export async function fetchNotes() {
 }
 
 // 创建新笔记
-export async function createNote(text) {
+export async function createNote(text, title = '') {
   if (!text.trim()) {
     throw new Error('笔记内容不能为空')
   }
@@ -56,10 +56,14 @@ export async function createNote(text) {
     const userId = await getCurrentUserId()
     console.log('当前用户ID:', userId) // 添加日志
     
+    // 如果没有提供标题，自动从内容中提取前50个字符作为标题
+    const noteTitle = title.trim() || text.trim().substring(0, 50) + (text.trim().length > 50 ? '...' : '')
+    
     const { data, error } = await supabase
       .from('notes')
       .insert([{ 
         text, 
+        title: noteTitle,
         user_id: userId 
       }])
       .select()
@@ -78,7 +82,7 @@ export async function createNote(text) {
 }
 
 // 更新笔记
-export async function updateNote(id, text) {
+export async function updateNote(id, text, title = '') {
   if (!text.trim()) {
     throw new Error('笔记内容不能为空')
   }
@@ -86,9 +90,16 @@ export async function updateNote(id, text) {
   try {
     const userId = await getCurrentUserId()
     
+    // 如果没有提供标题，自动从内容中提取前50个字符作为标题
+    const noteTitle = title.trim() || text.trim().substring(0, 50) + (text.trim().length > 50 ? '...' : '')
+    
     const { data, error } = await supabase
       .from('notes')
-      .update({ text, updated_at: new Date().toISOString() })
+      .update({ 
+        text, 
+        title: noteTitle,
+        updated_at: new Date().toISOString() 
+      })
       .eq('id', id)
       .eq('user_id', userId)  // 确保只能更新自己的笔记
       .select()
